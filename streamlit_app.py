@@ -312,36 +312,21 @@ def preprocess_input(
 
 def predict_engagement(X_input_scaled):
 
-    # --------------------------------------------------------
-    # KMEANS ROUTING
-    # --------------------------------------------------------
+    # KMeans decides which expert should handle the input
+    cluster = int(kmeans.predict(X_input_scaled)[0])
 
-    cluster = int(
-        kmeans.predict(X_input_scaled)[0]
-    )
-
-
-    # --------------------------------------------------------
-    # SELECT EXPERT
-    # --------------------------------------------------------
-
+    # Select corresponding Random Forest expert
     expert = experts_rf[cluster]
 
-
-    # --------------------------------------------------------
-    # PREDICTION
-    # --------------------------------------------------------
-
-    prediction = expert.predict(
-        X_input_scaled
-    )[0]
-
+    # Predict engagement
+    prediction = float(
+        expert.predict(X_input_scaled)[0]
+    )
 
     cluster_label = label_map.get(
         cluster,
         str(cluster)
     )
-
 
     return prediction, cluster, cluster_label
 
@@ -712,13 +697,49 @@ elif page == "🔮 Prediction":
                 is_holiday=is_holiday
             )
 
-
-            prediction, cluster, cluster_label = (
-                predict_engagement(
-                    X_input_scaled
-                )
+        # predection debuging 
+        prediction, cluster, cluster_label = (
+            predict_engagement(
+                X_input_scaled
             )
-
+        )
+        
+        st.success("Prediction completed successfully!")
+        
+        # ========================================================
+        # DEBUG INFORMATION
+        # ========================================================
+        
+        with st.expander("🔍 Model Debug Information"):
+        
+            st.write("### Input after preprocessing")
+        
+            debug_df = pd.DataFrame(
+                X_input_scaled,
+                columns=feature_columns
+            )
+        
+            st.dataframe(
+                debug_df,
+                use_container_width=True
+            )
+        
+            st.write("### KMeans Cluster")
+        
+            st.write(
+                f"Cluster ID: **{cluster}**"
+            )
+        
+            st.write(
+                f"Cluster Label: **{cluster_label}**"
+            )
+        
+            st.write("### Model Prediction")
+        
+            st.write(
+                f"Prediction: **{prediction:,.4f}**"
+            )
+            # prediction debuging end
 
             st.success(
                 "Prediction completed successfully!"
