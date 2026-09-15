@@ -2,56 +2,48 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import holidays
+
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 
-# =========================================================
+# ============================================================
 # PAGE CONFIG
-# =========================================================
+# ============================================================
 
 st.set_page_config(
     page_title="Instagram Engagement Prediction",
-    page_icon="📊",
+    page_icon="📸",
     layout="wide"
 )
 
 
-# =========================================================
+# ============================================================
 # PATHS
-# =========================================================
+# ============================================================
 
 BASE_DIR = Path(__file__).parent
 
 MODEL_PATH = BASE_DIR / "instagram_engagement_model.pkl"
-
 DATA_PATH = BASE_DIR / "data" / "instagram_engagement_processed.csv"
 
 
-# =========================================================
+# ============================================================
 # LOAD MODEL
-# =========================================================
+# ============================================================
 
 @st.cache_resource
 def load_model():
 
-    model_data = joblib.load(MODEL_PATH)
+    bundle = joblib.load(MODEL_PATH)
 
-    return model_data
-
-
-model_data = load_model()
-
-experts_rf = model_data["experts_rf"]
-kmeans = model_data["kmeans"]
-scaler = model_data["scaler"]
-feature_columns = model_data["feature_columns"]
-catcol = model_data["catcol"]
-numcol = model_data["numcol"]
+    return bundle
 
 
-# =========================================================
-# LOAD DATASET
-# =========================================================
+# ============================================================
+# LOAD DATA
+# ============================================================
 
 @st.cache_data
 def load_data():
@@ -61,33 +53,307 @@ def load_data():
     return df
 
 
-df = load_data()
+# ============================================================
+# LOAD EVERYTHING
+# ============================================================
+
+try:
+
+    bundle = load_model()
+
+    experts_rf = bundle["experts_rf"]
+    kmeans = bundle["kmeans"]
+    scaler = bundle["scaler"]
+
+    feature_columns = bundle["feature_columns"]
+
+    label_map = bundle.get(
+        "label_map",
+        {
+            1: "Low",
+            2: "Mid",
+            0: "High"
+        }
+    )
+
+except Exception as e:
+
+    st.error("Could not load the model.")
+
+    st.code(str(e))
+
+    st.stop()
 
 
-# =========================================================
-# TITLE
-# =========================================================
+try:
 
-st.title("📊 Instagram Engagement Prediction")
+    df = load_data()
 
-st.markdown(
+except Exception as e:
+
+    df = None
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def get_reach_time_bucket(hour):
+
     """
-    ### Machine Learning Prediction App
-
-    Predict Instagram post engagement based on post characteristics
-    and historical account/post features.
+    Same bucket logic used in the original notebook.
     """
-)
+
+    if hour in [6, 7, 8, 11, 12, 19, 20]:
+
+        return "peak"
+
+    elif hour in [23, 0, 1, 2, 3, 4, 5]:
+
+        return "low"
+
+    else:
+
+        return "normal"
 
 
-# =========================================================
+def get_caption_bucket(length):
+
+    """
+    Same pd.cut boundaries used in the notebook.
+    """
+
+    if length <= 50:
+
+        return "short"
+
+    elif length <= 150:
+
+        return "medium"
+
+    elif length <= 300:
+
+        return "long"
+
+    else:
+
+        return "very_long"
+
+
+def get_hashtag_bucket(number):
+
+    """
+    Same pd.cut boundaries used in the notebook.
+    """
+
+    if number == 0:
+
+        return "none"
+
+    elif number <= 5:
+
+        return "low"
+
+    elif number <= 15:
+
+        return "medium"
+
+    else:
+
+        return "high"
+
+
+def preprocess_input(
+    followers,
+    post_images,
+    user_median_engagement,
+    length_caption,
+    user_post_count,
+    number_hashtags,
+    video,
+    carousel,
+    publication_weekday,
+    caption_length_bucket,
+    hashtag_bucket,
+    reach_time_bucket,
+    is_weekend,
+    is_holiday
+):
+
+    # --------------------------------------------------------
+    # Create raw dataframe
+    # --------------------------------------------------------
+
+    input_data = pd.DataFrame({
+
+        "followers": [followers],
+
+        "post_images": [post_images],
+
+        "user_median_engagement": [
+            user_median_engagement
+        ],
+
+        "length_caption": [
+            length_caption
+        ],
+
+        "user_post_count": [
+            user_post_count
+        ],
+
+        "number_hashtags": [
+            number_hashtags
+        ],
+
+        "video": [video],
+
+        "carousel": [carousel],
+
+        "publication_weekday": [
+            publication_weekday
+        ],
+
+        "caption_length_bucket": [
+            caption_length_bucket
+        ],
+
+        "hashtag_bucket": [
+            hashtag_bucket
+        ],
+
+        "reach_time_bucket": [
+            reach_time_bucket
+        ],
+
+        "is_weekend": [
+            is_weekend
+        ],
+
+        "is_holiday": [
+            is_holiday
+        ]
+    })
+
+
+    # --------------------------------------------------------
+    # LOG TRANSFORMATION
+    # --------------------------------------------------------
+
+    numeric_columns = [
+        "followers",
+        "post_images",
+        "user_median_engagement",
+        "length_caption",
+        "user_post_count",
+        "number_hashtags"
+    ]
+
+    for col in numeric_columns:
+
+        input_data["log" + col] = np.log1p(
+            input_data[col]
+        )
+
+        input_data.drop(
+            columns=[col],
+            inplace=True
+        )
+
+
+    # --------------------------------------------------------
+    # ONE-HOT ENCODING
+    # --------------------------------------------------------
+
+    categorical_columns = [
+        "video",
+        "carousel",
+        "publication_weekday",
+        "caption_length_bucket",
+        "hashtag_bucket",
+        "reach_time_bucket",
+        "is_weekend",
+        "is_holiday"
+    ]
+
+    input_data = pd.get_dummies(
+        input_data,
+        columns=categorical_columns,
+        prefix=categorical_columns,
+        drop_first=True
+    )
+
+
+    # --------------------------------------------------------
+    # FORCE EXACT MODEL FEATURES
+    # --------------------------------------------------------
+
+    input_data = input_data.reindex(
+        columns=feature_columns,
+        fill_value=0
+    )
+
+
+    # Make sure everything is float
+    input_data = input_data.astype(float)
+
+
+    # --------------------------------------------------------
+    # SCALE
+    # --------------------------------------------------------
+
+    X_input_scaled = scaler.transform(
+        input_data
+    )
+
+
+    return X_input_scaled
+
+
+def predict_engagement(X_input_scaled):
+
+    # --------------------------------------------------------
+    # KMEANS ROUTING
+    # --------------------------------------------------------
+
+    cluster = int(
+        kmeans.predict(X_input_scaled)[0]
+    )
+
+
+    # --------------------------------------------------------
+    # SELECT EXPERT
+    # --------------------------------------------------------
+
+    expert = experts_rf[cluster]
+
+
+    # --------------------------------------------------------
+    # PREDICTION
+    # --------------------------------------------------------
+
+    prediction = expert.predict(
+        X_input_scaled
+    )[0]
+
+
+    cluster_label = label_map.get(
+        cluster,
+        str(cluster)
+    )
+
+
+    return prediction, cluster, cluster_label
+
+
+# ============================================================
 # SIDEBAR
-# =========================================================
+# ============================================================
 
-st.sidebar.title("Navigation")
+st.sidebar.title("📸 Instagram ML")
 
 page = st.sidebar.radio(
-    "Go to",
+    "Navigation",
     [
         "🏠 Home",
         "🔮 Prediction",
@@ -98,98 +364,95 @@ page = st.sidebar.radio(
 )
 
 
-# =========================================================
+# ============================================================
 # HOME
-# =========================================================
+# ============================================================
 
 if page == "🏠 Home":
 
-    st.header("Welcome 👋")
-
-    st.write(
-        """
-        This application uses a Machine Learning pipeline to predict
-        Instagram engagement.
-
-        The model uses KMeans clustering to route each post to one
-        of three Random Forest experts.
-        """
+    st.title(
+        "📸 Instagram Engagement Prediction"
     )
-
-    st.divider()
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(
-            "Dataset Rows",
-            f"{len(df):,}"
-        )
-
-    with col2:
-        st.metric(
-            "Features",
-            len(feature_columns)
-        )
-
-    with col3:
-        st.metric(
-            "Experts",
-            "3"
-        )
-
-    with col4:
-        st.metric(
-            "Model",
-            "Random Forest"
-        )
-
-    st.divider()
-
-    st.subheader("Project Workflow")
 
     st.markdown(
         """
-        **1. Data Processing**
+        ## Machine Learning Application
 
+        This application predicts Instagram post engagement
+        using a **Mixture of Experts Random Forest model**.
+
+        ### Pipeline
+
+        **Raw Post Data**
         ↓
 
-        **2. Feature Engineering**
-
+        **Feature Engineering**
         ↓
 
-        **3. Log Transformation**
-
+        **Log Transformation**
         ↓
 
-        **4. One-Hot Encoding**
-
+        **One-Hot Encoding**
         ↓
 
-        **5. Standard Scaling**
-
+        **StandardScaler**
         ↓
 
-        **6. KMeans Clustering**
-
+        **KMeans Clustering**
         ↓
 
-        **7. Random Forest Expert**
-
+        **Random Forest Expert**
         ↓
 
-        **8. Engagement Prediction**
+        **Predicted Engagement**
+        """
+    )
+
+    st.divider()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.metric(
+            "Model",
+            "MoE Random Forest"
+        )
+
+    with col2:
+
+        st.metric(
+            "Clusters",
+            "3"
+        )
+
+    with col3:
+
+        st.metric(
+            "Features",
+            "24"
+        )
+
+    st.divider()
+
+    st.info(
+        """
+        The model first assigns a post to one of three
+        clusters using KMeans, then sends the post to the
+        corresponding Random Forest expert.
         """
     )
 
 
-# =========================================================
+# ============================================================
 # PREDICTION
-# =========================================================
+# ============================================================
 
 elif page == "🔮 Prediction":
 
-    st.header("🔮 Predict Instagram Engagement")
+    st.title(
+        "🔮 Predict Instagram Engagement"
+    )
 
     st.write(
         "Enter the characteristics of the Instagram post."
@@ -197,9 +460,12 @@ elif page == "🔮 Prediction":
 
     st.divider()
 
-    # -----------------------------------------------------
-    # INPUTS
-    # -----------------------------------------------------
+
+    # --------------------------------------------------------
+    # ACCOUNT INFORMATION
+    # --------------------------------------------------------
+
+    st.subheader("👤 Account Information")
 
     col1, col2 = st.columns(2)
 
@@ -209,58 +475,83 @@ elif page == "🔮 Prediction":
             "Followers",
             min_value=0,
             value=10000,
-            step=100
+            step=1000
         )
 
-        awards = st.number_input(
-            "Awards",
+
+    with col2:
+
+        user_post_count = st.number_input(
+            "Previous Posts Count",
             min_value=0,
-            value=0,
+            value=10,
             step=1
         )
 
-        day_difference = st.number_input(
-            "Day Difference",
-            min_value=0,
-            value=1,
-            step=1
-        )
+
+    user_median_engagement = st.number_input(
+        "Historical Median Engagement",
+        min_value=0.0,
+        value=1000.0,
+        step=100.0
+    )
+
+
+    st.divider()
+
+
+    # --------------------------------------------------------
+    # POST INFORMATION
+    # --------------------------------------------------------
+
+    st.subheader("📝 Post Information")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
 
         post_images = st.number_input(
             "Number of Images",
-            min_value=0,
+            min_value=1,
+            max_value=10,
             value=1,
             step=1
         )
+
 
         length_caption = st.number_input(
             "Caption Length",
             min_value=0,
-            value=100,
+            value=150,
             step=10
         )
+
 
         number_hashtags = st.number_input(
             "Number of Hashtags",
             min_value=0,
-            value=5,
+            max_value=30,
+            value=2,
             step=1
         )
+
 
     with col2:
 
         video = st.selectbox(
             "Video",
-            [0, 1]
+            ["No", "Yes"]
         )
+
 
         carousel = st.selectbox(
             "Carousel",
-            [0, 1]
+            ["No", "Yes"]
         )
 
+
         publication_weekday = st.selectbox(
-            "Publication Weekday",
+            "Publication Day",
             [
                 "Monday",
                 "Tuesday",
@@ -272,221 +563,174 @@ elif page == "🔮 Prediction":
             ]
         )
 
-        hour = st.slider(
-            "Post Hour",
-            min_value=0,
-            max_value=23,
-            value=12
-        )
 
-        is_holiday = st.selectbox(
-            "Holiday",
-            [0, 1]
-        )
-
-        user_post_count = st.number_input(
-            "User Post Count",
-            min_value=0,
-            value=10,
-            step=1
-        )
-
-        user_median_engagement = st.number_input(
-            "User Median Engagement",
-            min_value=0.0,
-            value=100.0,
-            step=10.0
-        )
+    st.divider()
 
 
-    # -----------------------------------------------------
-    # FEATURE ENGINEERING
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # TIME
+    # --------------------------------------------------------
 
-    if number_hashtags == 0:
+    st.subheader("🕐 Publication Time")
 
-        hashtag_bucket = "none"
-
-    elif number_hashtags <= 5:
-
-        hashtag_bucket = "low"
-
-    elif number_hashtags <= 15:
-
-        hashtag_bucket = "medium"
-
-    else:
-
-        hashtag_bucket = "high"
-
-
-    if length_caption <= 50:
-
-        caption_length_bucket = "short"
-
-    elif length_caption <= 150:
-
-        caption_length_bucket = "medium"
-
-    elif length_caption <= 300:
-
-        caption_length_bucket = "long"
-
-    else:
-
-        caption_length_bucket = "very_long"
-
-
-    if hour in [6, 7, 8, 11, 12, 19, 20]:
-
-        reach_time_bucket = "peak"
-
-    elif hour in [23, 0, 1, 2, 3, 4, 5]:
-
-        reach_time_bucket = "low"
-
-    else:
-
-        reach_time_bucket = "normal"
-
-
-    is_weekend = int(
-        publication_weekday in ["Saturday", "Sunday"]
+    post_hour = st.slider(
+        "Publication Hour",
+        min_value=0,
+        max_value=23,
+        value=12
     )
 
 
-    # -----------------------------------------------------
-    # CREATE INPUT DATAFRAME
-    # -----------------------------------------------------
-
-    input_data = pd.DataFrame({
-
-        "followers": [followers],
-
-        "awards": [awards],
-
-        "day_difference": [day_difference],
-
-        "post_images": [post_images],
-
-        "length_caption": [length_caption],
-
-        "number_hashtags": [number_hashtags],
-
-        "video": [video],
-
-        "carousel": [carousel],
-
-        "publication_weekday": [publication_weekday],
-
-        "is_holiday": [is_holiday],
-
-        "user_post_count": [user_post_count],
-
-        "user_median_engagement": [
-            user_median_engagement
-        ],
-
-        "hashtag_bucket": [
-            hashtag_bucket
-        ],
-
-        "caption_length_bucket": [
-            caption_length_bucket
-        ],
-
-        "reach_time_bucket": [
-            reach_time_bucket
-        ],
-
-        "is_weekend": [
-            is_weekend
-        ]
-
-    })
+    reach_time_bucket = get_reach_time_bucket(
+        post_hour
+    )
 
 
-    # -----------------------------------------------------
-    # PREDICT
-    # -----------------------------------------------------
+    st.info(
+        f"Reach Time Bucket: **{reach_time_bucket}**"
+    )
+
+
+    # --------------------------------------------------------
+    # DATE / HOLIDAY
+    # --------------------------------------------------------
+
+    st.subheader("📅 Publication Date")
+
+    post_date = st.date_input(
+        "Post Date"
+    )
+
+
+    us_holidays = holidays.US(
+        years=[post_date.year]
+    )
+
+    is_holiday = (
+        post_date in us_holidays
+    )
+
+
+    is_weekend = (
+        1
+        if publication_weekday
+        in ["Saturday", "Sunday"]
+        else 0
+    )
+
+
+    # --------------------------------------------------------
+    # AUTOMATIC BUCKETS
+    # --------------------------------------------------------
+
+    caption_length_bucket = get_caption_bucket(
+        length_caption
+    )
+
+    hashtag_bucket = get_hashtag_bucket(
+        number_hashtags
+    )
+
+
+    st.write(
+        f"Caption Bucket: **{caption_length_bucket}**"
+    )
+
+    st.write(
+        f"Hashtag Bucket: **{hashtag_bucket}**"
+    )
+
+    st.write(
+        f"Weekend: **{'Yes' if is_weekend else 'No'}**"
+    )
+
+    st.write(
+        f"US Holiday: **{'Yes' if is_holiday else 'No'}**"
+    )
+
+
+    st.divider()
+
+
+    # --------------------------------------------------------
+    # PREDICT BUTTON
+    # --------------------------------------------------------
 
     if st.button(
         "🚀 Predict Engagement",
-        type="primary"
+        type="primary",
+        use_container_width=True
     ):
+
+        video_value = (
+            1 if video == "Yes" else 0
+        )
+
+        carousel_value = (
+            1 if carousel == "Yes" else 0
+        )
+
 
         try:
 
-            processed = input_data.copy()
+            X_input_scaled = preprocess_input(
 
-            # Numerical columns
-            numeric_features = [
-                c for c in numcol
-                if c != "Engagement"
-            ]
+                followers=followers,
 
-            # Log transformation
-            for col in numeric_features:
+                post_images=post_images,
 
-                if col in processed.columns:
+                user_median_engagement=
+                    user_median_engagement,
 
-                    processed["log" + col] = np.log1p(
-                        processed[col]
-                    )
+                length_caption=
+                    length_caption,
 
-                    processed.drop(
-                        columns=col,
-                        inplace=True
-                    )
+                user_post_count=
+                    user_post_count,
 
+                number_hashtags=
+                    number_hashtags,
 
-            # One-hot encoding
-            processed = pd.get_dummies(
-                processed,
-                columns=catcol,
-                prefix=catcol,
-                drop_first=True
-            ).astype(float)
+                video=video_value,
 
+                carousel=carousel_value,
 
-            # Make sure columns are identical
-            processed = processed.reindex(
-                columns=feature_columns,
-                fill_value=0
+                publication_weekday=
+                    publication_weekday,
+
+                caption_length_bucket=
+                    caption_length_bucket,
+
+                hashtag_bucket=
+                    hashtag_bucket,
+
+                reach_time_bucket=
+                    reach_time_bucket,
+
+                is_weekend=is_weekend,
+
+                is_holiday=is_holiday
             )
 
 
-            # Scale
-            X_input_scaled = scaler.transform(
-                processed
+            prediction, cluster, cluster_label = (
+                predict_engagement(
+                    X_input_scaled
+                )
             )
 
 
-            # KMeans cluster
-            cluster = int(
-                kmeans.predict(X_input_scaled)[0]
+            st.success(
+                "Prediction completed successfully!"
             )
 
 
-            # Select expert
-            expert = experts_rf[cluster]
+            # ------------------------------------------------
+            # RESULTS
+            # ------------------------------------------------
 
+            col1, col2, col3 = st.columns(3)
 
-            # Prediction
-            prediction = expert.predict(
-                X_input_scaled
-            )[0]
-
-
-            # -------------------------------------------------
-            # RESULT
-            # -------------------------------------------------
-
-            st.success("Prediction completed successfully!")
-
-            st.divider()
-
-            col1, col2 = st.columns(2)
 
             with col1:
 
@@ -495,16 +739,91 @@ elif page == "🔮 Prediction":
                     f"{prediction:,.0f}"
                 )
 
+
             with col2:
 
                 st.metric(
-                    "Assigned Cluster",
-                    cluster
+                    "Cluster",
+                    f"{cluster}"
                 )
 
 
-            st.info(
-                f"The post was routed to Random Forest Expert {cluster}."
+            with col3:
+
+                st.metric(
+                    "Cluster Level",
+                    cluster_label
+                )
+
+
+            st.divider()
+
+
+            st.subheader(
+                "📋 Prediction Summary"
+            )
+
+
+            result_df = pd.DataFrame({
+
+                "Feature": [
+                    "Followers",
+                    "Images",
+                    "Caption Length",
+                    "Hashtags",
+                    "Video",
+                    "Carousel",
+                    "Day",
+                    "Hour",
+                    "Time Bucket",
+                    "Caption Bucket",
+                    "Hashtag Bucket",
+                    "Weekend",
+                    "US Holiday",
+                    "Cluster"
+                ],
+
+                "Value": [
+
+                    f"{followers:,}",
+
+                    post_images,
+
+                    length_caption,
+
+                    number_hashtags,
+
+                    video,
+
+                    carousel,
+
+                    publication_weekday,
+
+                    post_hour,
+
+                    reach_time_bucket,
+
+                    caption_length_bucket,
+
+                    hashtag_bucket,
+
+                    "Yes"
+                    if is_weekend
+                    else "No",
+
+                    "Yes"
+                    if is_holiday
+                    else "No",
+
+                    f"{cluster} ({cluster_label})"
+                ]
+            })
+
+
+            st.dataframe(
+                result_df,
+                use_container_width=True,
+                hide_index=True
             )
 
 
@@ -517,96 +836,306 @@ elif page == "🔮 Prediction":
             st.exception(e)
 
 
-# =========================================================
+# ============================================================
 # DATASET
-# =========================================================
+# ============================================================
 
 elif page == "📊 Dataset":
 
-    st.header("📊 Dataset")
-
-    st.write(
-        f"Dataset contains {len(df):,} rows."
+    st.title(
+        "📊 Dataset Explorer"
     )
 
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
+    if df is None:
+
+        st.error(
+            "Dataset could not be loaded."
+        )
+
+    else:
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Rows",
+                f"{df.shape[0]:,}"
+            )
+
+        with col2:
+
+            st.metric(
+                "Columns",
+                df.shape[1]
+            )
+
+        with col3:
+
+            st.metric(
+                "Missing Values",
+                int(df.isna().sum().sum())
+            )
 
 
-# =========================================================
+        st.divider()
+
+
+        st.subheader(
+            "Dataset Preview"
+        )
+
+        st.dataframe(
+            df.head(100),
+            use_container_width=True
+        )
+
+
+        st.subheader(
+            "Column Information"
+        )
+
+        column_info = pd.DataFrame({
+
+            "Column": df.columns,
+
+            "Data Type": [
+                str(dtype)
+                for dtype in df.dtypes
+            ],
+
+            "Missing Values": [
+                df[col].isna().sum()
+                for col in df.columns
+            ],
+
+            "Unique Values": [
+                df[col].nunique()
+                for col in df.columns
+            ]
+        })
+
+
+        st.dataframe(
+            column_info,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ============================================================
 # ANALYTICS
-# =========================================================
+# ============================================================
 
 elif page == "📈 Analytics":
 
-    st.header("📈 Dataset Analytics")
-
-    st.subheader("Engagement Distribution")
-
-    if "Engagement" in df.columns:
-
-        st.line_chart(
-            df["Engagement"].head(500)
-        )
-
-        st.subheader("Engagement Statistics")
-
-        st.dataframe(
-            df["Engagement"].describe()
-        )
-
-
-    st.subheader("Dataset Preview")
-
-    st.dataframe(
-        df.head(20),
-        use_container_width=True
+    st.title(
+        "📈 Dataset Analytics"
     )
 
+    if df is None:
 
-# =========================================================
+        st.error(
+            "Dataset could not be loaded."
+        )
+
+    else:
+
+        numeric_columns = (
+            df.select_dtypes(
+                include=np.number
+            ).columns.tolist()
+        )
+
+
+        if len(numeric_columns) > 0:
+
+            selected_column = st.selectbox(
+                "Select Numeric Feature",
+                numeric_columns
+            )
+
+
+            fig, ax = plt.subplots(
+                figsize=(10, 5)
+            )
+
+
+            ax.hist(
+                df[selected_column].dropna(),
+                bins=30
+            )
+
+
+            ax.set_title(
+                f"Distribution of {selected_column}"
+            )
+
+            ax.set_xlabel(
+                selected_column
+            )
+
+            ax.set_ylabel(
+                "Frequency"
+            )
+
+
+            st.pyplot(fig)
+
+
+        st.divider()
+
+
+        if "Engagement" in df.columns:
+
+            st.subheader(
+                "Engagement Statistics"
+            )
+
+            st.write(
+                df["Engagement"].describe()
+            )
+
+
+# ============================================================
 # MODEL INFORMATION
-# =========================================================
+# ============================================================
 
 elif page == "🤖 Model Information":
 
-    st.header("🤖 Model Information")
+    st.title(
+        "🤖 Model Information"
+    )
 
-    st.subheader("Model Architecture")
+
+    st.subheader(
+        "Model Architecture"
+    )
 
     st.markdown(
         """
-        ### Mixture of Experts
+        ### 1. Feature Engineering
 
-        The project uses:
+        The model uses:
 
-        - **KMeans**
-        - **3 clusters**
-        - **3 Random Forest experts**
-        - **300 trees per expert**
-        - **Maximum depth = 8**
-        - **Random state = 42**
+        - Followers
+        - Number of images
+        - Historical median engagement
+        - Caption length
+        - Previous post count
+        - Number of hashtags
+        - Video
+        - Carousel
+        - Publication weekday
+        - Caption length bucket
+        - Hashtag bucket
+        - Reach time bucket
+        - Weekend indicator
+        - US holiday indicator
 
-        Each input is first assigned to a cluster by KMeans.
-        The corresponding Random Forest expert then produces
-        the final engagement prediction.
+        ### 2. Transformation
+
+        Numerical features are transformed using:
+
+        `log1p()`
+
+        Then categorical features are transformed using:
+
+        `One-Hot Encoding`
+
+        with:
+
+        `drop_first=True`
+
+        ### 3. Scaling
+
+        `StandardScaler`
+
+        ### 4. Clustering
+
+        `KMeans`
+
+        - Number of clusters: **3**
+        - Random state: **42**
+        - n_init: **10**
+
+        ### 5. Experts
+
+        Each cluster has its own:
+
+        `RandomForestRegressor`
+
+        - 300 trees
+        - max depth 8 for the trained clusters
+        - random state 42
         """
     )
 
+
     st.divider()
 
-    st.subheader("Model Performance")
+
+    st.subheader(
+        "Model Features"
+    )
+
+
+    feature_df = pd.DataFrame({
+
+        "Feature": feature_columns
+
+    })
+
+
+    st.dataframe(
+        feature_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    st.divider()
+
+
+    st.subheader(
+        "Cluster Labels"
+    )
+
+
+    cluster_df = pd.DataFrame({
+
+        "Cluster": list(label_map.keys()),
+
+        "Level": list(label_map.values())
+
+    })
+
+
+    st.dataframe(
+        cluster_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    st.divider()
+
+
+    st.subheader(
+        "Model Evaluation"
+    )
+
 
     col1, col2, col3 = st.columns(3)
+
 
     with col1:
 
         st.metric(
-            "R²",
+            "Test R²",
             "0.8685"
         )
+
 
     with col2:
 
@@ -615,6 +1144,7 @@ elif page == "🤖 Model Information":
             "180,872"
         )
 
+
     with col3:
 
         st.metric(
@@ -622,6 +1152,7 @@ elif page == "🤖 Model Information":
             "30,321"
         )
 
+
     st.caption(
-        "Performance values are from the test evaluation in the training notebook."
+        "Evaluation values are from the original notebook test evaluation."
     )
