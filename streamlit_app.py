@@ -179,66 +179,29 @@ def preprocess_input(
     is_weekend,
     is_holiday
 ):
+    """Reproduce the notebook preprocessing exactly.
 
-    # --------------------------------------------------------
-    # Create raw dataframe
-    # --------------------------------------------------------
+    The returned features are UN-SCALED because the Random Forest
+    experts were trained on unscaled X_train. StandardScaler is
+    applied only when routing the input through KMeans.
+    """
 
     input_data = pd.DataFrame({
-
         "followers": [followers],
-
         "post_images": [post_images],
-
-        "user_median_engagement": [
-            user_median_engagement
-        ],
-
-        "length_caption": [
-            length_caption
-        ],
-
-        "user_post_count": [
-            user_post_count
-        ],
-
-        "number_hashtags": [
-            number_hashtags
-        ],
-
+        "user_median_engagement": [user_median_engagement],
+        "length_caption": [length_caption],
+        "user_post_count": [user_post_count],
+        "number_hashtags": [number_hashtags],
         "video": [video],
-
         "carousel": [carousel],
-
-        "publication_weekday": [
-            publication_weekday
-        ],
-
-        "caption_length_bucket": [
-            caption_length_bucket
-        ],
-
-        "hashtag_bucket": [
-            hashtag_bucket
-        ],
-
-        "reach_time_bucket": [
-            reach_time_bucket
-        ],
-
-        "is_weekend": [
-            is_weekend
-        ],
-
-        "is_holiday": [
-            is_holiday
-        ]
+        "publication_weekday": [publication_weekday],
+        "caption_length_bucket": [caption_length_bucket],
+        "hashtag_bucket": [hashtag_bucket],
+        "reach_time_bucket": [reach_time_bucket],
+        "is_weekend": [is_weekend],
+        "is_holiday": [is_holiday]
     })
-
-
-    # --------------------------------------------------------
-    # LOG TRANSFORMATION
-    # --------------------------------------------------------
 
     numeric_columns = [
         "followers",
@@ -250,20 +213,8 @@ def preprocess_input(
     ]
 
     for col in numeric_columns:
-
-        input_data["log" + col] = np.log1p(
-            input_data[col]
-        )
-
-        input_data.drop(
-            columns=[col],
-            inplace=True
-        )
-
-
-    # --------------------------------------------------------
-    # ONE-HOT ENCODING
-    # --------------------------------------------------------
+        input_data["log" + col] = np.log1p(input_data[col])
+        input_data.drop(columns=[col], inplace=True)
 
     categorical_columns = [
         "video",
@@ -283,44 +234,25 @@ def preprocess_input(
         drop_first=True
     )
 
-
-    # --------------------------------------------------------
-    # FORCE EXACT MODEL FEATURES
-    # --------------------------------------------------------
-
     input_data = input_data.reindex(
         columns=feature_columns,
         fill_value=0
     )
 
-
-    # Make sure everything is float
-    input_data = input_data.astype(float)
+    return input_data.astype(float)
 
 
-    # --------------------------------------------------------
-    # SCALE
-    # --------------------------------------------------------
+def predict_engagement(input_data):
+    """KMeans receives scaled features; RF receives unscaled features."""
 
-    X_input_scaled = scaler.transform(
-        input_data
-    )
+    X_input_scaled = scaler.transform(input_data)
 
-
-    return X_input_scaled
-
-
-def predict_engagement(X_input_scaled):
-
-    # KMeans decides which expert should handle the input
     cluster = int(kmeans.predict(X_input_scaled)[0])
 
-    # Select corresponding Random Forest expert
     expert = experts_rf[cluster]
 
-    # Predict engagement
     prediction = float(
-        expert.predict(X_input_scaled)[0]
+        expert.predict(input_data)[0]
     )
 
     cluster_label = label_map.get(
@@ -328,7 +260,7 @@ def predict_engagement(X_input_scaled):
         str(cluster)
     )
 
-    return prediction, cluster, cluster_label
+    return prediction, cluster, cluster_label, X_input_scaled
 
 
 # ============================================================
@@ -647,183 +579,130 @@ elif page == "🔮 Prediction":
         use_container_width=True
     ):
 
-        video_value = (
-            1 if video == "Yes" else 0
-        )
-
-        carousel_value = (
-            1 if carousel == "Yes" else 0
-        )
-
+        video_value = 1 if video == "Yes" else 0
+        carousel_value = 1 if carousel == "Yes" else 0
 
         try:
-
-            X_input_scaled = preprocess_input(
-
+            X_input = preprocess_input(
                 followers=followers,
-
                 post_images=post_images,
-
-                user_median_engagement=
-                    user_median_engagement,
-
-                length_caption=
-                    length_caption,
-
-                user_post_count=
-                    user_post_count,
-
-                number_hashtags=
-                    number_hashtags,
-
+                user_median_engagement=user_median_engagement,
+                length_caption=length_caption,
+                user_post_count=user_post_count,
+                number_hashtags=number_hashtags,
                 video=video_value,
-
                 carousel=carousel_value,
-
-                publication_weekday=
-                    publication_weekday,
-
-                caption_length_bucket=
-                    caption_length_bucket,
-
-                hashtag_bucket=
-                    hashtag_bucket,
-
-                reach_time_bucket=
-                    reach_time_bucket,
-
+                publication_weekday=publication_weekday,
+                caption_length_bucket=caption_length_bucket,
+                hashtag_bucket=hashtag_bucket,
+                reach_time_bucket=reach_time_bucket,
                 is_weekend=is_weekend,
-
                 is_holiday=is_holiday
             )
 
-        # predection debuging 
-        prediction, cluster, cluster_label = (
-            predict_engagement(
-                X_input_scaled
+            prediction, cluster, cluster_label, X_input_scaled = (
+                predict_engagement(X_input)
             )
-        )
-        
-        st.success("Prediction completed successfully!")
-        
-        # ========================================================
-        # DEBUG INFORMATION
-        # ========================================================
-        
-        with st.expander("🔍 Model Debug Information"):
-        
-            st.write("### Input after preprocessing")
-        
-            debug_df = pd.DataFrame(
-                X_input_scaled,
-                columns=feature_columns
-            )
-        
+
+            st.success("Prediction completed successfully!")
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Predicted Engagement",
+                    f"{prediction:,.0f}"
+                )
+
+            with col2:
+                st.metric(
+                    "Cluster",
+                    str(cluster)
+                )
+
+            with col3:
+                st.metric(
+                    "Cluster Level",
+                    cluster_label
+                )
+
+            st.divider()
+
+            with st.expander("🔍 Model Debug Information"):
+                st.write("### Features sent to Random Forest")
+                st.dataframe(
+                    X_input,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                st.write("### Scaled features sent to KMeans")
+                debug_scaled = pd.DataFrame(
+                    X_input_scaled,
+                    columns=feature_columns
+                )
+                st.dataframe(
+                    debug_scaled,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                st.write(f"Cluster ID: **{cluster}**")
+                st.write(f"Cluster Label: **{cluster_label}**")
+                st.write(f"Prediction: **{prediction:,.4f}**")
+
+            st.divider()
+
+            st.subheader("📋 Prediction Summary")
+
+            result_df = pd.DataFrame({
+                "Feature": [
+                    "Followers",
+                    "Previous Posts Count",
+                    "Historical Median Engagement",
+                    "Images",
+                    "Caption Length",
+                    "Hashtags",
+                    "Video",
+                    "Carousel",
+                    "Day",
+                    "Hour",
+                    "Time Bucket",
+                    "Caption Bucket",
+                    "Hashtag Bucket",
+                    "Weekend",
+                    "US Holiday",
+                    "Cluster"
+                ],
+                "Value": [
+                    f"{followers:,}",
+                    f"{user_post_count:,}",
+                    f"{user_median_engagement:,.0f}",
+                    post_images,
+                    length_caption,
+                    number_hashtags,
+                    video,
+                    carousel,
+                    publication_weekday,
+                    post_hour,
+                    reach_time_bucket,
+                    caption_length_bucket,
+                    hashtag_bucket,
+                    "Yes" if is_weekend else "No",
+                    "Yes" if is_holiday else "No",
+                    f"{cluster} ({cluster_label})"
+                ]
+            })
+
             st.dataframe(
-                debug_df,
-                use_container_width=True
+                result_df,
+                use_container_width=True,
+                hide_index=True
             )
-        
-            st.write("### KMeans Cluster")
-        
-            st.write(
-                f"Cluster ID: **{cluster}**"
-            )
-        
-            st.write(
-                f"Cluster Label: **{cluster_label}**"
-            )
-        
-            st.write("### Model Prediction")
-        
-            st.write(
-                f"Prediction: **{prediction:,.4f}**"
-            )
-            # prediction debuging end
 
-
-
-           try:
-
-    # ------------------------------------------------
-    # RESULTS
-    # ------------------------------------------------
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "Predicted Engagement",
-            f"{prediction:,.0f}"
-        )
-
-    with col2:
-        st.metric(
-            "Cluster",
-            f"{cluster}"
-        )
-
-    with col3:
-        st.metric(
-            "Cluster Level",
-            cluster_label
-        )
-
-    st.divider()
-
-    st.subheader("📋 Prediction Summary")
-
-    result_df = pd.DataFrame({
-
-        "Feature": [
-            "Followers",
-            "Images",
-            "Caption Length",
-            "Hashtags",
-            "Video",
-            "Carousel",
-            "Day",
-            "Hour",
-            "Time Bucket",
-            "Caption Bucket",
-            "Hashtag Bucket",
-            "Weekend",
-            "US Holiday",
-            "Cluster"
-        ],
-
-        "Value": [
-            f"{followers:,}",
-            post_images,
-            length_caption,
-            number_hashtags,
-            video,
-            carousel,
-            publication_weekday,
-            post_hour,
-            reach_time_bucket,
-            caption_length_bucket,
-            hashtag_bucket,
-            "Yes" if is_weekend else "No",
-            "Yes" if is_holiday else "No",
-            f"{cluster} ({cluster_label})"
-        ]
-    })
-
-    st.dataframe(
-        result_df,
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    st.success(
-         "Prediction completed successfully!"
-    )
-
-except Exception as e:
-
-    st.error("Prediction failed.")
-    st.exception(e)
+        except Exception as e:
+            st.error("Prediction failed.")
+            st.exception(e)
 
 # ============================================================
 # DATASET
