@@ -741,121 +741,89 @@ elif page == "🔮 Prediction":
             )
             # prediction debuging end
 
-            st.success(
-                "Prediction completed successfully!"
-            )
 
 
-            # ------------------------------------------------
-            # RESULTS
-            # ------------------------------------------------
+           try:
 
-            col1, col2, col3 = st.columns(3)
+    # ------------------------------------------------
+    # RESULTS
+    # ------------------------------------------------
 
+    col1, col2, col3 = st.columns(3)
 
-            with col1:
+    with col1:
+        st.metric(
+            "Predicted Engagement",
+            f"{prediction:,.0f}"
+        )
 
-                st.metric(
-                    "Predicted Engagement",
-                    f"{prediction:,.0f}"
-                )
+    with col2:
+        st.metric(
+            "Cluster",
+            f"{cluster}"
+        )
 
+    with col3:
+        st.metric(
+            "Cluster Level",
+            cluster_label
+        )
 
-            with col2:
+    st.divider()
 
-                st.metric(
-                    "Cluster",
-                    f"{cluster}"
-                )
+    st.subheader("📋 Prediction Summary")
 
+    result_df = pd.DataFrame({
 
-            with col3:
+        "Feature": [
+            "Followers",
+            "Images",
+            "Caption Length",
+            "Hashtags",
+            "Video",
+            "Carousel",
+            "Day",
+            "Hour",
+            "Time Bucket",
+            "Caption Bucket",
+            "Hashtag Bucket",
+            "Weekend",
+            "US Holiday",
+            "Cluster"
+        ],
 
-                st.metric(
-                    "Cluster Level",
-                    cluster_label
-                )
+        "Value": [
+            f"{followers:,}",
+            post_images,
+            length_caption,
+            number_hashtags,
+            video,
+            carousel,
+            publication_weekday,
+            post_hour,
+            reach_time_bucket,
+            caption_length_bucket,
+            hashtag_bucket,
+            "Yes" if is_weekend else "No",
+            "Yes" if is_holiday else "No",
+            f"{cluster} ({cluster_label})"
+        ]
+    })
 
+    st.dataframe(
+        result_df,
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    st.success(
+         "Prediction completed successfully!"
+    )
 
-            st.divider()
+except Exception as e:
 
-
-            st.subheader(
-                "📋 Prediction Summary"
-            )
-
-
-            result_df = pd.DataFrame({
-
-                "Feature": [
-                    "Followers",
-                    "Images",
-                    "Caption Length",
-                    "Hashtags",
-                    "Video",
-                    "Carousel",
-                    "Day",
-                    "Hour",
-                    "Time Bucket",
-                    "Caption Bucket",
-                    "Hashtag Bucket",
-                    "Weekend",
-                    "US Holiday",
-                    "Cluster"
-                ],
-
-                "Value": [
-
-                    f"{followers:,}",
-
-                    post_images,
-
-                    length_caption,
-
-                    number_hashtags,
-
-                    video,
-
-                    carousel,
-
-                    publication_weekday,
-
-                    post_hour,
-
-                    reach_time_bucket,
-
-                    caption_length_bucket,
-
-                    hashtag_bucket,
-
-                    "Yes"
-                    if is_weekend
-                    else "No",
-
-                    "Yes"
-                    if is_holiday
-                    else "No",
-
-                    f"{cluster} ({cluster_label})"
-                ]
-            })
-
-
-            st.dataframe(
-                result_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-
-        except Exception as e:
-
-            st.error(
-                "Prediction failed."
-            )
-
-            st.exception(e)
-
+    st.error("Prediction failed.")
+    st.exception(e)
 
 # ============================================================
 # DATASET
